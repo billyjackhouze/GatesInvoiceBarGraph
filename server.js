@@ -113,16 +113,46 @@ app.get('/api/pipeline', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 app.get('/api/debug', async (req, res) => {
   const result = await withFM(res, async (fm) => {
-    // Wildcard find — grab any 10 records from the layout
-    const rawRecords = await fm.findRecords(
-      LAYOUT,
-      [{ '_id': '*' }],
-      { limit: 10 }
-    );
-    return rawRecords.map(r => ({
-      recordId:  r.recordId,
-      fieldData: r.fieldData,
-    }));
+    const out = {};
+
+    // Test 1: how many total records does the layout expose?
+    try {
+      const all = await fm.findRecords(LAYOUT, [{ '_id': '*' }], { limit: 1000 });
+      out.totalRecordsInLayout = all.length;
+      // Tally InvoiceType and Type values across all returned records
+      const invTypeCounts = {}, typeCounts = {};
+      all.forEach(r => {
+        const it = r.fieldData['InvoiceType'] || '(blank)';
+        const t  = r.fieldData['Type']        || '(blank)';
+        invTypeCounts[it] = (invTypeCounts[it] || 0) + 1;
+        typeCounts[t]     = (typeCounts[t]     || 0) + 1;
+      });
+      out.InvoiceType_counts = invTypeCounts;
+      out.Type_counts        = typeCounts;
+    } catch (e) {
+      out.allRecordsError = e.message;
+    }
+
+    // Test 2: can we find InvoiceType = 'Acknowledged'?
+    try {
+      const ack = await fm.findRecords(LAYOUT, [{ 'InvoiceType': 'Acknowledged' }], { limit: 5 });
+      out.InvoiceType_Acknowledged_count = ack.length;
+      out.InvoiceType_Acknowledged_sample = ack[0]?.fieldData ?? null;
+    } catch (e) {
+      out.InvoiceType_Acknowledged_error = e.message;
+    }
+
+    // Test 3: can we find IsNotInvoiced = 1?
+    try {
+      const notInv = await fm.findRecords(LAYOUT, [{ 'IsNotInvoiced': '1' }], { limit: 5 });
+      out.IsNotInvoiced_1_count = notInv.length;
+      out.IsNotInvoiced_1_sample_InvoiceType = notInv.map(r => r.fieldData['InvoiceType']);
+      out.IsNotInvoiced_1_sample_Type        = notInv.map(r => r.fieldData['Type']);
+    } catch (e) {
+      out.IsNotInvoiced_1_error = e.message;
+    }
+
+    return out;
   });
   if (result !== null) res.json(result);
 });

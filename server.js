@@ -16,7 +16,7 @@ require('dotenv').config();
  *   On Hold (shown separately at bottom)
  *
  * FM FIND: OR query — one criteria per active stage.
- * InvoiceType is a Calculation field; values match stage names exactly.
+ * Query against 'Type' (stored field) — NOT 'InvoiceType' (calc field, unreliable for early stages).
  */
 
 const path    = require('path');
@@ -67,14 +67,15 @@ app.get('/api/pipeline', async (req, res) => {
   const result = await withFM(res, async (fm) => {
 
     // OR query — one criteria object per stage
-    const query = ALL_STAGES.map(stage => ({ 'InvoiceType': stage }));
+    // Use 'Type' (stored field), NOT 'InvoiceType' (calc — only reliable for late stages)
+    const query = ALL_STAGES.map(stage => ({ 'Type': stage }));
 
     const rawRecords = await fm.findRecords(
       LAYOUT,
       query,
       {
         limit: 1000,
-        sort:  [{ fieldName: 'InvoiceType', sortOrder: 'ascend' }],
+        sort:  [{ fieldName: 'Type', sortOrder: 'ascend' }],
       }
     );
 
@@ -83,7 +84,7 @@ app.get('/api/pipeline', async (req, res) => {
       recordId:    r.recordId,
       invoiceId:   r.fieldData['_id']          || String(r.recordId),
       company:     r.fieldData['CompanyName']   || '—',
-      stage:       r.fieldData['InvoiceType']   || '',
+      stage:       r.fieldData['Type']          || '',
       date:        r.fieldData['Date']          || '',
       poNumber:    r.fieldData['PONumber']      || '',
       customerPO:  r.fieldData['CustomerPO']    || '',

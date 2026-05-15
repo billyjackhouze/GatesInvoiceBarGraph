@@ -9,7 +9,7 @@ const STAGE_ORDER = ['Preflight', 'Acknowledged', 'Fulfillment', 'Logistics', 'D
 const STAGE_CFG = {
   Preflight:    { color: '#3b82f6', label: 'Preflight',    short: 'PRE'  },
   Acknowledged: { color: '#8b5cf6', label: 'Acknowledged', short: 'ACK'  },
-  Fulfillment:  { color: '#f97316', label: 'Fulfillment',  short: 'FULL' },
+  Fulfillment:  { color: '#f97316', label: 'Fulfillment',  short: 'FILLED' },
   Logistics:    { color: '#06b6d4', label: 'Logistics',    short: 'LOG'  },
   Delivery:     { color: '#22c55e', label: 'Delivery',     short: 'DEL'  },
   Signed:       { color: '#eab308', label: 'Signed',       short: 'SGN'  },

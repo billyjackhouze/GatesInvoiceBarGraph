@@ -2,19 +2,31 @@ import { useState, useEffect, useCallback } from 'react'
 
 const REFRESH_MS = 60_000
 
-// ── Stage config — defines order, color, and icon ─────────────────────────────
-const STAGES = [
-  { key: 'Preflight',    label: 'PREFLIGHT',    color: '#3b82f6', dark: '#1e3a5f', icon: '🔵' },
-  { key: 'Acknowledged', label: 'ACKNOWLEDGED', color: '#8b5cf6', dark: '#2e1f5e', icon: '🟣' },
-  { key: 'Fulfillment',  label: 'FULFILLMENT',  color: '#f97316', dark: '#431407', icon: '🟠' },
-  { key: 'Logistics',    label: 'LOGISTICS',    color: '#06b6d4', dark: '#083344', icon: '🩵' },
-  { key: 'Delivery',     label: 'DELIVERY',     color: '#22c55e', dark: '#052e16', icon: '🟢' },
-  { key: 'Signed',       label: 'SIGNED',       color: '#eab308', dark: '#3a2700', icon: '⭐' },
-]
-const ON_HOLD = { key: 'On Hold', label: 'ON HOLD', color: '#6b7280', dark: '#1f2937', icon: '⏸️' }
+// Stage order defines the pipeline sequence
+const STAGE_ORDER = ['Preflight', 'Acknowledged', 'Fulfillment', 'Logistics', 'Delivery', 'Signed']
 
-function stageConfig(key) {
-  return STAGES.find(s => s.key === key) || ON_HOLD
+const STAGE_CFG = {
+  Preflight:    { color: '#3b82f6', label: 'Preflight',    short: 'PRE'  },
+  Acknowledged: { color: '#8b5cf6', label: 'Acknowledged', short: 'ACK'  },
+  Fulfillment:  { color: '#f97316', label: 'Fulfillment',  short: 'FULL' },
+  Logistics:    { color: '#06b6d4', label: 'Logistics',    short: 'LOG'  },
+  Delivery:     { color: '#22c55e', label: 'Delivery',     short: 'DEL'  },
+  Signed:       { color: '#eab308', label: 'Signed',       short: 'SGN'  },
+  'On Hold':    { color: '#6b7280', label: 'On Hold',      short: 'HOLD' },
+}
+
+// Parse FM date M/D/YYYY → JS Date (noon local)
+function parseFMDate(str) {
+  if (!str) return null
+  const [m, d, y] = str.split('/').map(Number)
+  if (!m || !d || !y) return null
+  return new Date(y, m - 1, d, 12, 0, 0)
+}
+
+function formatDate(str) {
+  const d = parseFMDate(str)
+  if (!d) return str || '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 // ── Live clock ─────────────────────────────────────────────────────────────────
@@ -45,8 +57,31 @@ function Clock() {
   )
 }
 
+// ── Fullscreen button ──────────────────────────────────────────────────────────
+function FullscreenButton() {
+  const [isFull, setIsFull] = useState(false)
+  useEffect(() => {
+    const onChange = () => setIsFull(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+  const toggle = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
+  return (
+    <button className="fs-btn" onClick={toggle} title={isFull ? 'Exit fullscreen' : 'Enter fullscreen'}>
+      {isFull ? '✕' : '⛶'}
+      <span className="fs-label">{isFull ? 'EXIT FULL' : 'FULLSCREEN'}</span>
+    </button>
+  )
+}
+
 // ── Header ─────────────────────────────────────────────────────────────────────
-function Header({ total }) {
+function Header() {
   return (
     <header className="header">
       <div className="logo-wrap">
@@ -54,9 +89,10 @@ function Header({ total }) {
       </div>
       <div className="title-block">
         <div className="app-title">Invoice Pipeline</div>
-        <div className="app-sub">Gates Engineered Lubricants{total > 0 ? ` — ${total} Active` : ''}</div>
+        <div className="app-sub">Gates Engineered Lubricants</div>
       </div>
       <Clock />
+      <FullscreenButton />
     </header>
   )
 }
@@ -77,7 +113,6 @@ function StatusBar({ connected, asOf }) {
     const id = setInterval(compute, 10_000)
     return () => clearInterval(id)
   }, [asOf])
-
   return (
     <div className="statusbar">
       <span className={`status-dot ${connected ? 'live' : 'dead'}`} />
@@ -89,47 +124,99 @@ function StatusBar({ connected, asOf }) {
   )
 }
 
-// ── Invoice card ───────────────────────────────────────────────────────────────
-function InvoiceCard({ record, stageColor }) {
+// ── Total banner ───────────────────────────────────────────────────────────────
+function TotalBanner({ total, stageCounts }) {
   return (
-    <div className="inv-card" style={{ '--stage-color': stageColor }}>
-      <div className="inv-company">{record.company}</div>
-      <div className="inv-number">#{record.invoiceId}</div>
-      {record.poNumber && (
-        <div className="inv-po">PO {record.poNumber}</div>
-      )}
+    <div className="total-banner">
+      <div className="total-main">
+        <span className="total-num">{total}</span>
+        <span className="total-label">Active Invoices in Pipeline</span>
+      </div>
+      <div className="total-chips">
+        {STAGE_ORDER.filter(s => stageCounts[s] > 0).map(s => {
+          const cfg = STAGE_CFG[s]
+          return (
+            <span key={s} className="total-chip" style={{ borderColor: cfg.color, color: cfg.color }}>
+              {cfg.short} {stageCounts[s]}
+            </span>
+          )
+        })}
+        {stageCounts['On Hold'] > 0 && (
+          <span className="total-chip" style={{ borderColor: '#6b7280', color: '#6b7280' }}>
+            HOLD {stageCounts['On Hold']}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
 
-// ── Swim lane ──────────────────────────────────────────────────────────────────
-function SwimLane({ stage, records, isOnHold }) {
-  const cfg = stageConfig(stage)
-  return (
-    <section className={`swim-lane ${isOnHold ? 'on-hold-lane' : ''}`}>
-      <div
-        className="lane-header"
-        style={{
-          background: `linear-gradient(90deg, ${cfg.color}cc, ${cfg.dark}ee)`,
-          borderLeft: `4px solid ${cfg.color}`,
-        }}
-      >
-        <span className="lane-icon">{cfg.icon}</span>
-        <span className="lane-name">{cfg.label}</span>
-        <span className="lane-count" style={{ background: cfg.color }}>
-          {records.length}
-        </span>
-      </div>
-      {records.length === 0 ? (
-        <div className="lane-empty">No invoices in this stage</div>
-      ) : (
-        <div className="lane-cards">
-          {records.map(r => (
-            <InvoiceCard key={r.recordId} record={r} stageColor={cfg.color} />
-          ))}
+// ── Progress bar ───────────────────────────────────────────────────────────────
+function ProgressBar({ currentStage }) {
+  const currentIdx = STAGE_ORDER.indexOf(currentStage)
+  const isOnHold   = currentStage === 'On Hold'
+
+  if (isOnHold) {
+    return (
+      <div className="progress-bar">
+        <div className="progress-seg hold-seg">
+          <span className="seg-label">⏸ ON HOLD</span>
         </div>
-      )}
-    </section>
+      </div>
+    )
+  }
+
+  return (
+    <div className="progress-bar">
+      {STAGE_ORDER.map((stage, idx) => {
+        const cfg         = STAGE_CFG[stage]
+        const isCompleted = idx < currentIdx
+        const isCurrent   = idx === currentIdx
+        const isFuture    = idx > currentIdx
+
+        return (
+          <div
+            key={stage}
+            className={`progress-seg ${isCompleted ? 'seg-done' : ''} ${isCurrent ? 'seg-active' : ''} ${isFuture ? 'seg-future' : ''}`}
+            style={{
+              '--seg-color':    cfg.color,
+              '--seg-color-dim': cfg.color + '33',
+              flex: isCurrent ? '1.4' : '1',
+            }}
+          >
+            {isCompleted && <span className="seg-check">✓</span>}
+            <span className="seg-label">{isCurrent ? cfg.label.toUpperCase() : cfg.short}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Invoice row ────────────────────────────────────────────────────────────────
+function InvoiceRow({ record }) {
+  const cfg     = STAGE_CFG[record.stage] || STAGE_CFG['On Hold']
+  const isHold  = record.stage === 'On Hold'
+
+  return (
+    <div className={`inv-row ${isHold ? 'inv-row-hold' : ''}`}
+         style={{ '--row-color': cfg.color }}>
+      <div className="inv-row-top">
+        <div className="inv-info">
+          <div className="inv-company">{record.company}</div>
+          <div className="inv-meta">
+            <span className="inv-number" style={{ color: cfg.color }}>
+              #{record.invoiceId}
+            </span>
+            {record.poNumber && (
+              <span className="inv-po">· PO {record.poNumber}</span>
+            )}
+          </div>
+        </div>
+        <div className="inv-date">{formatDate(record.date)}</div>
+      </div>
+      <ProgressBar currentStage={record.stage} />
+    </div>
   )
 }
 
@@ -138,12 +225,8 @@ function EmptyState({ error }) {
   return (
     <div className="empty-state">
       <div className="empty-icon">{error ? '⚠️' : '✅'}</div>
-      <div className="empty-label">
-        {error ? 'Failed to load pipeline' : 'No Active Invoices'}
-      </div>
-      <div className="empty-sub">
-        {error || 'Board refreshes automatically every minute'}
-      </div>
+      <div className="empty-label">{error ? 'Failed to load pipeline' : 'No Active Invoices'}</div>
+      <div className="empty-sub">{error || 'Board refreshes automatically'}</div>
     </div>
   )
 }
@@ -158,13 +241,12 @@ export default function App() {
   const [connected, setConnected] = useState(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
     try {
       const res = await fetch('/api/pipeline')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setStages(data.stages || [])
-      setTotal(data.total || 0)
+      setTotal(data.total  || 0)
       setAsOf(data.asOf)
       setConnected(true)
       setError(null)
@@ -182,9 +264,25 @@ export default function App() {
     return () => clearInterval(t)
   }, [load])
 
-  // Pipeline stages (top) and On Hold (bottom)
-  const pipelineStages = stages.filter(s => s.stage !== 'On Hold')
-  const onHoldStage    = stages.find(s => s.stage === 'On Hold')
+  // Flatten all records, sort by date desc, On Hold at bottom
+  const allRecords = stages.flatMap(s => s.records)
+  const pipeline   = allRecords
+    .filter(r => r.stage !== 'On Hold')
+    .sort((a, b) => {
+      const da = parseFMDate(a.date), db = parseFMDate(b.date)
+      return (db || 0) - (da || 0)
+    })
+  const onHold = allRecords
+    .filter(r => r.stage === 'On Hold')
+    .sort((a, b) => {
+      const da = parseFMDate(a.date), db = parseFMDate(b.date)
+      return (db || 0) - (da || 0)
+    })
+  const sorted = [...pipeline, ...onHold]
+
+  // Stage counts for the summary chips
+  const stageCounts = {}
+  stages.forEach(s => { stageCounts[s.stage] = s.count })
 
   let content
   if (loading && stages.length === 0) {
@@ -197,28 +295,17 @@ export default function App() {
     )
   } else if (error && stages.length === 0) {
     content = <EmptyState error={error} />
+  } else if (sorted.length === 0) {
+    content = <EmptyState />
   } else {
-    content = (
-      <>
-        {pipelineStages.map(({ stage, records }) => (
-          <SwimLane key={stage} stage={stage} records={records} isOnHold={false} />
-        ))}
-        {onHoldStage && (
-          <SwimLane
-            key="On Hold"
-            stage="On Hold"
-            records={onHoldStage.records}
-            isOnHold={true}
-          />
-        )}
-      </>
-    )
+    content = sorted.map(r => <InvoiceRow key={r.recordId} record={r} />)
   }
 
   return (
     <>
-      <Header total={total} />
+      <Header />
       <StatusBar connected={connected} asOf={asOf} />
+      {total > 0 && <TotalBanner total={total} stageCounts={stageCounts} />}
       <main className="board">{content}</main>
     </>
   )

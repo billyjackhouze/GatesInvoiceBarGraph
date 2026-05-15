@@ -370,9 +370,11 @@ export default function App() {
 
   return (
     <>
-      <Header autoScroll={autoScroll} onToggleScroll={() => setAutoScroll(v => !v)} />
-      <StatusBar connected={connected} asOf={asOf} />
-      {total > 0 && <TotalBanner total={total} stageCounts={stageCounts} />}
+      <div className="sticky-chrome">
+        <Header autoScroll={autoScroll} onToggleScroll={() => setAutoScroll(v => !v)} />
+        <StatusBar connected={connected} asOf={asOf} />
+        {total > 0 && <TotalBanner total={total} stageCounts={stageCounts} />}
+      </div>
       <main className="board">{content}</main>
     </>
   )

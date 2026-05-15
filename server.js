@@ -76,17 +76,17 @@ app.get('/api/pipeline', async (req, res) => {
 
     const today = todayCT();
 
-    // OR query — each object is one find criteria (ANDed within, OR between objects)
-    // Early stages (Preflight→Logistics) return 0 in this layout today; Delivery + Signed work.
+    // OR query using 'Type' (stored field — confirmed correct in GatesPipelineAPI 2026-05-15).
+    // FM stores delivery-stage records as 'Delivery Ticket'; we remap to 'Delivery' below.
     // Signed: scoped to DateSigned = today so stale signed invoices don't clutter the board.
     const query = [
-      { 'InvoiceType': 'Preflight'    },
-      { 'InvoiceType': 'Acknowledged' },
-      { 'InvoiceType': 'Fulfillment'  },
-      { 'InvoiceType': 'Logistics'    },
-      { 'InvoiceType': 'Delivery'     },
-      { 'InvoiceType': 'On Hold'      },
-      { 'InvoiceType': 'Signed', 'DateSigned': today },  // today only
+      { 'Type': 'Preflight'        },
+      { 'Type': 'Acknowledged'     },
+      { 'Type': 'Fulfillment'      },
+      { 'Type': 'Logistics'        },
+      { 'Type': 'Delivery Ticket'  },
+      { 'Type': 'On Hold'          },
+      { 'Type': 'Signed', 'DateSigned': today },  // today only
     ];
 
     const rawRecords = await fm.findRecords(
@@ -94,16 +94,22 @@ app.get('/api/pipeline', async (req, res) => {
       query,
       {
         limit: 1000,
-        sort:  [{ fieldName: 'InvoiceType', sortOrder: 'ascend' }],
+        sort:  [{ fieldName: 'Type', sortOrder: 'ascend' }],
       }
     );
+
+    // Remap FM Type values → board stage names
+    function toStage(fmType) {
+      if (fmType === 'Delivery Ticket') return 'Delivery';
+      return fmType || '';
+    }
 
     // Map FM fields → clean shape
     const records = rawRecords.map(r => ({
       recordId:    r.recordId,
       invoiceId:   r.fieldData['_id']          || String(r.recordId),
-      company:     r.fieldData['CompanyName']   || '—',
-      stage:       r.fieldData['InvoiceType']   || '',
+      company:     r.fieldData['CompanyName']   || r.fieldData['BillToCompany'] || '—',
+      stage:       toStage(r.fieldData['Type']),
       date:        r.fieldData['Date']          || '',
       dateSigned:  r.fieldData['DateSigned']    || '',
       poNumber:    r.fieldData['PONumber']      || '',

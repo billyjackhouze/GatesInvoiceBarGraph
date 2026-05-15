@@ -108,6 +108,26 @@ app.get('/api/pipeline', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/debug  — returns raw fieldData of first 10 records (any stage)
+// Remove once field names are confirmed.
+// ─────────────────────────────────────────────────────────────
+app.get('/api/debug', async (req, res) => {
+  const result = await withFM(res, async (fm) => {
+    // Wildcard find — grab any 10 records from the layout
+    const rawRecords = await fm.findRecords(
+      LAYOUT,
+      [{ '_id': '*' }],
+      { limit: 10 }
+    );
+    return rawRecords.map(r => ({
+      recordId:  r.recordId,
+      fieldData: r.fieldData,
+    }));
+  });
+  if (result !== null) res.json(result);
+});
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/health
 // ─────────────────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {

@@ -9,7 +9,7 @@ require('dotenv').config();
  *   GET  /api/pipeline   → active invoices grouped by stage
  *   GET  /api/health     → connection status
  *
- * FM LAYOUT: GatesInvoicesAPI
+ * FM LAYOUT: GatesPipelineAPI  (replaces GatesInvoicesAPI — includes all pipeline stages)
  *
  * FIELD NOTES (confirmed via /api/debug audit 2026-05-15):
  *   InvoiceType  — calc field; reliably returns 'Delivery' and 'Signed' for active pipeline records.
@@ -26,7 +26,7 @@ const express = require('express');
 const { createGELClient } = require('./lib/fm-client');
 
 const PORT   = process.env.PIPELINE_PORT || 3006;
-const LAYOUT = 'GatesInvoicesAPI';
+const LAYOUT = 'GatesPipelineAPI';
 
 // Stage definitions — order controls board order
 const PIPELINE_STAGES = [

@@ -105,16 +105,22 @@ app.get('/api/pipeline', async (req, res) => {
     }
 
     // Map FM fields → clean shape
-    const records = rawRecords.map(r => ({
-      recordId:    r.recordId,
-      invoiceId:   r.fieldData['_id']          || String(r.recordId),
-      company:     r.fieldData['CompanyName']   || r.fieldData['BillToCompany'] || '—',
-      stage:       toStage(r.fieldData['Type']),
-      date:        r.fieldData['Date']          || '',
-      dateSigned:  r.fieldData['DateSigned']    || '',
-      poNumber:    r.fieldData['PONumber']      || '',
-      customerPO:  r.fieldData['CustomerPO']    || '',
+    const allRecords = rawRecords.map(r => ({
+      recordId:      r.recordId,
+      invoiceId:     r.fieldData['_id']            || String(r.recordId),
+      company:       r.fieldData['CompanyName']     || r.fieldData['BillToCompany'] || '—',
+      stage:         toStage(r.fieldData['Type']),
+      date:          r.fieldData['Date']            || '',
+      dateSigned:    r.fieldData['DateSigned']      || '',
+      dateProcessed: r.fieldData['DateProcessed']   || '',
+      poNumber:      r.fieldData['PONumber']        || '',
+      customerPO:    r.fieldData['CustomerPO']      || '',
     }));
+
+    // Exclude Delivery Tickets that have already been processed (DateProcessed is set)
+    const records = allRecords.filter(r =>
+      !(r.stage === 'Delivery' && r.dateProcessed)
+    );
 
     // Group by stage in pipeline order
     const grouped = ALL_STAGES.map(stage => ({

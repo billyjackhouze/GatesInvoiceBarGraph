@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
-const REFRESH_MS = 60_000
+const REFRESH_MS  = 60_000
+const SCROLL_SPEED = 45  // px per second
 
 // Stage order defines the pipeline sequence
 const STAGE_ORDER = ['Preflight', 'Acknowledged', 'Fulfillment', 'Logistics', 'Delivery', 'Signed']
@@ -80,8 +81,24 @@ function FullscreenButton() {
   )
 }
 
+// ── Auto-scroll toggle ─────────────────────────────────────────────────────────
+function AutoScrollToggle({ enabled, onToggle }) {
+  return (
+    <button
+      className={`scroll-toggle ${enabled ? 'scroll-on' : 'scroll-off'}`}
+      onClick={onToggle}
+      title={enabled ? 'Pause auto-scroll' : 'Resume auto-scroll'}
+    >
+      <span className="scroll-track">
+        <span className="scroll-knob" />
+      </span>
+      <span className="scroll-label">{enabled ? 'AUTO' : 'PAUSE'}</span>
+    </button>
+  )
+}
+
 // ── Header ─────────────────────────────────────────────────────────────────────
-function Header() {
+function Header({ autoScroll, onToggleScroll }) {
   return (
     <header className="header">
       <div className="logo-wrap">
@@ -92,6 +109,7 @@ function Header() {
         <div className="app-sub">Gates Engineered Lubricants</div>
       </div>
       <Clock />
+      <AutoScrollToggle enabled={autoScroll} onToggle={onToggleScroll} />
       <FullscreenButton />
     </header>
   )
@@ -179,7 +197,7 @@ function ProgressBar({ currentStage }) {
             key={stage}
             className={`progress-seg ${isCompleted ? 'seg-done' : ''} ${isCurrent ? 'seg-active' : ''} ${isFuture ? 'seg-future' : ''}`}
             style={{
-              '--seg-color':    cfg.color,
+              '--seg-color':     cfg.color,
               '--seg-color-dim': cfg.color + '33',
               flex: isCurrent ? '1.4' : '1',
             }}
@@ -195,8 +213,8 @@ function ProgressBar({ currentStage }) {
 
 // ── Invoice row ────────────────────────────────────────────────────────────────
 function InvoiceRow({ record }) {
-  const cfg     = STAGE_CFG[record.stage] || STAGE_CFG['On Hold']
-  const isHold  = record.stage === 'On Hold'
+  const cfg      = STAGE_CFG[record.stage] || STAGE_CFG['On Hold']
+  const isHold   = record.stage === 'On Hold'
   const isSigned = record.stage === 'Signed'
 
   return (
@@ -217,9 +235,7 @@ function InvoiceRow({ record }) {
         <div className="inv-date-block">
           <div className="inv-date">{formatDate(record.date)}</div>
           {isSigned && record.dateSigned && (
-            <div className="inv-signed-date">
-              ✓ Signed {formatDate(record.dateSigned)}
-            </div>
+            <div className="inv-signed-date">✓ Signed {formatDate(record.dateSigned)}</div>
           )}
         </div>
       </div>
@@ -241,20 +257,69 @@ function EmptyState({ error }) {
 
 // ── Main App ───────────────────────────────────────────────────────────────────
 export default function App() {
-  const [stages,    setStages]    = useState([])
-  const [total,     setTotal]     = useState(0)
-  const [asOf,      setAsOf]      = useState(null)
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState(null)
-  const [connected, setConnected] = useState(false)
+  const [stages,     setStages]     = useState([])
+  const [total,      setTotal]      = useState(0)
+  const [asOf,       setAsOf]       = useState(null)
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState(null)
+  const [connected,  setConnected]  = useState(false)
+  const [autoScroll, setAutoScroll] = useState(true)   // ON by default
 
+  // ── Auto-scroll engine ───────────────────────────────────────────────────────
+  const rafRef      = useRef(null)
+  const lastTsRef   = useRef(null)
+  const pauseUntil  = useRef(0)     // ms timestamp — pause until this time (top-of-list hold)
+
+  useEffect(() => {
+    if (!autoScroll) {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current  = null
+      lastTsRef.current = null
+      return
+    }
+
+    function step(ts) {
+      // Hold at top for 2 s before starting to scroll
+      if (ts < pauseUntil.current) {
+        lastTsRef.current = null
+        rafRef.current = requestAnimationFrame(step)
+        return
+      }
+
+      const delta = lastTsRef.current != null ? (ts - lastTsRef.current) / 1000 : 0
+      lastTsRef.current = ts
+
+      window.scrollBy(0, SCROLL_SPEED * delta)
+
+      // Reached bottom → jump to top and pause 2 s
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4) {
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        pauseUntil.current = performance.now() + 2000
+        lastTsRef.current  = null
+      }
+
+      rafRef.current = requestAnimationFrame(step)
+    }
+
+    // Start with a 1.5 s pause so the board is visible before scrolling begins
+    pauseUntil.current = performance.now() + 1500
+    rafRef.current = requestAnimationFrame(step)
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current    = null
+      lastTsRef.current = null
+    }
+  }, [autoScroll])
+
+  // ── Data fetching ────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/pipeline')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setStages(data.stages || [])
-      setTotal(data.total  || 0)
+      setTotal(data.total   || 0)
       setAsOf(data.asOf)
       setConnected(true)
       setError(null)
@@ -272,20 +337,14 @@ export default function App() {
     return () => clearInterval(t)
   }, [load])
 
-  // Flatten all records, sort by date desc, On Hold at bottom
+  // Flatten + sort: active stages by date desc, On Hold at bottom
   const allRecords = stages.flatMap(s => s.records)
   const pipeline   = allRecords
     .filter(r => r.stage !== 'On Hold')
-    .sort((a, b) => {
-      const da = parseFMDate(a.date), db = parseFMDate(b.date)
-      return (db || 0) - (da || 0)
-    })
-  const onHold = allRecords
+    .sort((a, b) => (parseFMDate(b.date) || 0) - (parseFMDate(a.date) || 0))
+  const onHold     = allRecords
     .filter(r => r.stage === 'On Hold')
-    .sort((a, b) => {
-      const da = parseFMDate(a.date), db = parseFMDate(b.date)
-      return (db || 0) - (da || 0)
-    })
+    .sort((a, b) => (parseFMDate(b.date) || 0) - (parseFMDate(a.date) || 0))
   const sorted = [...pipeline, ...onHold]
 
   // Stage counts for the summary chips
@@ -311,7 +370,7 @@ export default function App() {
 
   return (
     <>
-      <Header />
+      <Header autoScroll={autoScroll} onToggleScroll={() => setAutoScroll(v => !v)} />
       <StatusBar connected={connected} asOf={asOf} />
       {total > 0 && <TotalBanner total={total} stageCounts={stageCounts} />}
       <main className="board">{content}</main>

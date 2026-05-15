@@ -6,17 +6,19 @@ require('dotenv').config();
  *
  * Routes:
  *   GET  /               → serve UI (dist/)
- *   GET  /api/pipeline   → all active invoices grouped by InvoiceType stage
+ *   GET  /api/pipeline   → active invoices grouped by stage
  *   GET  /api/health     → connection status
  *
  * FM LAYOUT: GatesInvoicesAPI
  *
- * STAGES (top → bottom on board):
- *   Preflight → Acknowledged → Fulfillment → Logistics → Delivery → Signed
- *   On Hold (shown separately at bottom)
+ * FIELD NOTES (confirmed via /api/debug audit 2026-05-15):
+ *   InvoiceType  — calc field; reliably returns 'Delivery' and 'Signed' for active pipeline records.
+ *                  'Acknowledged', 'Fulfillment', 'Logistics', 'On Hold' return 0 results in this
+ *                  layout — those stages live in a different FM table/layout (to be wired up later).
+ *   Type         — stores document type ('Delivery Ticket', 'Signed', 'Quote') — NOT workflow stage.
+ *   DateSigned   — M/D/YYYY string; populated when invoice is signed.
  *
- * FM FIND: OR query — one criteria per active stage.
- * Query against 'Type' (stored field) — NOT 'InvoiceType' (calc field, unreliable for early stages).
+ * Signed stage: filtered to TODAY (CT) only — shows what was signed today.
  */
 
 const path    = require('path');
@@ -26,7 +28,7 @@ const { createGELClient } = require('./lib/fm-client');
 const PORT   = process.env.PIPELINE_PORT || 3006;
 const LAYOUT = 'GatesInvoicesAPI';
 
-// Stage definitions — order here controls board order (On Hold always last)
+// Stage definitions — order controls board order
 const PIPELINE_STAGES = [
   'Preflight',
   'Acknowledged',
@@ -36,6 +38,12 @@ const PIPELINE_STAGES = [
   'Signed',
 ];
 const ALL_STAGES = [...PIPELINE_STAGES, 'On Hold'];
+
+// Today's date in FM format (M/D/YYYY) using CT timezone
+function todayCT() {
+  const ct = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  return `${ct.getMonth() + 1}/${ct.getDate()}/${ct.getFullYear()}`;
+}
 
 const app = express();
 app.use(express.json());
@@ -66,16 +74,27 @@ async function withFM(res, fn) {
 app.get('/api/pipeline', async (req, res) => {
   const result = await withFM(res, async (fm) => {
 
-    // OR query — one criteria object per stage
-    // Use 'Type' (stored field), NOT 'InvoiceType' (calc — only reliable for late stages)
-    const query = ALL_STAGES.map(stage => ({ 'Type': stage }));
+    const today = todayCT();
+
+    // OR query — each object is one find criteria (ANDed within, OR between objects)
+    // Early stages (Preflight→Logistics) return 0 in this layout today; Delivery + Signed work.
+    // Signed: scoped to DateSigned = today so stale signed invoices don't clutter the board.
+    const query = [
+      { 'InvoiceType': 'Preflight'    },
+      { 'InvoiceType': 'Acknowledged' },
+      { 'InvoiceType': 'Fulfillment'  },
+      { 'InvoiceType': 'Logistics'    },
+      { 'InvoiceType': 'Delivery'     },
+      { 'InvoiceType': 'On Hold'      },
+      { 'InvoiceType': 'Signed', 'DateSigned': today },  // today only
+    ];
 
     const rawRecords = await fm.findRecords(
       LAYOUT,
       query,
       {
         limit: 1000,
-        sort:  [{ fieldName: 'Type', sortOrder: 'ascend' }],
+        sort:  [{ fieldName: 'InvoiceType', sortOrder: 'ascend' }],
       }
     );
 
@@ -84,13 +103,14 @@ app.get('/api/pipeline', async (req, res) => {
       recordId:    r.recordId,
       invoiceId:   r.fieldData['_id']          || String(r.recordId),
       company:     r.fieldData['CompanyName']   || '—',
-      stage:       r.fieldData['Type']          || '',
+      stage:       r.fieldData['InvoiceType']   || '',
       date:        r.fieldData['Date']          || '',
+      dateSigned:  r.fieldData['DateSigned']    || '',
       poNumber:    r.fieldData['PONumber']      || '',
       customerPO:  r.fieldData['CustomerPO']    || '',
     }));
 
-    // Group by stage in defined order
+    // Group by stage in pipeline order
     const grouped = ALL_STAGES.map(stage => ({
       stage,
       count:   records.filter(r => r.stage === stage).length,
@@ -104,56 +124,6 @@ app.get('/api/pipeline', async (req, res) => {
     };
   });
 
-  if (result !== null) res.json(result);
-});
-
-// ─────────────────────────────────────────────────────────────
-// GET /api/debug  — returns raw fieldData of first 10 records (any stage)
-// Remove once field names are confirmed.
-// ─────────────────────────────────────────────────────────────
-app.get('/api/debug', async (req, res) => {
-  const result = await withFM(res, async (fm) => {
-    const out = {};
-
-    // Test 1: how many total records does the layout expose?
-    try {
-      const all = await fm.findRecords(LAYOUT, [{ '_id': '*' }], { limit: 1000 });
-      out.totalRecordsInLayout = all.length;
-      // Tally InvoiceType and Type values across all returned records
-      const invTypeCounts = {}, typeCounts = {};
-      all.forEach(r => {
-        const it = r.fieldData['InvoiceType'] || '(blank)';
-        const t  = r.fieldData['Type']        || '(blank)';
-        invTypeCounts[it] = (invTypeCounts[it] || 0) + 1;
-        typeCounts[t]     = (typeCounts[t]     || 0) + 1;
-      });
-      out.InvoiceType_counts = invTypeCounts;
-      out.Type_counts        = typeCounts;
-    } catch (e) {
-      out.allRecordsError = e.message;
-    }
-
-    // Test 2: can we find InvoiceType = 'Acknowledged'?
-    try {
-      const ack = await fm.findRecords(LAYOUT, [{ 'InvoiceType': 'Acknowledged' }], { limit: 5 });
-      out.InvoiceType_Acknowledged_count = ack.length;
-      out.InvoiceType_Acknowledged_sample = ack[0]?.fieldData ?? null;
-    } catch (e) {
-      out.InvoiceType_Acknowledged_error = e.message;
-    }
-
-    // Test 3: can we find IsNotInvoiced = 1?
-    try {
-      const notInv = await fm.findRecords(LAYOUT, [{ 'IsNotInvoiced': '1' }], { limit: 5 });
-      out.IsNotInvoiced_1_count = notInv.length;
-      out.IsNotInvoiced_1_sample_InvoiceType = notInv.map(r => r.fieldData['InvoiceType']);
-      out.IsNotInvoiced_1_sample_Type        = notInv.map(r => r.fieldData['Type']);
-    } catch (e) {
-      out.IsNotInvoiced_1_error = e.message;
-    }
-
-    return out;
-  });
   if (result !== null) res.json(result);
 });
 

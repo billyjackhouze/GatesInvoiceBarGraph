@@ -197,6 +197,7 @@ function ProgressBar({ currentStage }) {
 function InvoiceRow({ record }) {
   const cfg     = STAGE_CFG[record.stage] || STAGE_CFG['On Hold']
   const isHold  = record.stage === 'On Hold'
+  const isSigned = record.stage === 'Signed'
 
   return (
     <div className={`inv-row ${isHold ? 'inv-row-hold' : ''}`}
@@ -213,7 +214,14 @@ function InvoiceRow({ record }) {
             )}
           </div>
         </div>
-        <div className="inv-date">{formatDate(record.date)}</div>
+        <div className="inv-date-block">
+          <div className="inv-date">{formatDate(record.date)}</div>
+          {isSigned && record.dateSigned && (
+            <div className="inv-signed-date">
+              ✓ Signed {formatDate(record.dateSigned)}
+            </div>
+          )}
+        </div>
       </div>
       <ProgressBar currentStage={record.stage} />
     </div>
